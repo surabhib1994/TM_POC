@@ -203,14 +203,3 @@ This project follows Terraform best practices:
 
 3. **State Lock Issues**:
    - Release the state lock if a previous operation was interrupted
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
