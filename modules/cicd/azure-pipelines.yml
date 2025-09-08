@@ -1,0 +1,119 @@
+# Azure DevOps Pipeline for Terraform Deployment
+# This pipeline automates the deployment of DataBricks and Airflow resources
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - terraform/**
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values:
+    - dev
+    - prod
+
+variables:
+  - name: terraformVersion
+    value: '1.5.0'
+  - name: azureServiceConnection
+    value: 'azure-service-connection'
+  - name: terraformBackendResourceGroup
+    value: 'terraform-backend-rg'
+  - name: terraformBackendStorageAccount
+    value: 'tfstatestore$(System.TeamProjectId)'
+  - name: terraformBackendContainer
+    value: 'tfstate'
+  - name: terraformBackendKey
+    value: 'databricks-${{ parameters.environment }}.tfstate'
+  - name: terraformWorkingDirectory
+    value: '$(System.DefaultWorkingDirectory)/terraform/environments/${{ parameters.environment }}'
+
+stages:
+- stage: Validate
+  displayName: 'Validate Terraform'
+  jobs:
+  - job: Validate
+    displayName: 'Validate'
+    steps:
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform $(terraformVersion)'
+      inputs:
+        terraformVersion: '$(terraformVersion)'
+    
+    - task: TerraformTaskV3@3
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: '$(terraformWorkingDirectory)'
+        backendServiceArm: '$(azureServiceConnection)'
+        backendAzureRmResourceGroupName: '$(terraformBackendResourceGroup)'
+        backendAzureRmStorageAccountName: '$(terraformBackendStorageAccount)'
+        backendAzureRmContainerName: '$(terraformBackendContainer)'
+        backendAzureRmKey: '$(terraformBackendKey)'
+    
+    - task: TerraformTaskV3@3
+      displayName: 'Terraform Validate'
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(terraformWorkingDirectory)'
+    
+    - task: TerraformTaskV3@3
+      displayName: 'Terraform Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: '$(terraformWorkingDirectory)'
+        environmentServiceNameAzureRM: '$(azureServiceConnection)'
+        commandOptions: '-out=$(terraformWorkingDirectory)/plan.tfplan'
+
+- stage: Deploy
+  displayName: 'Deploy Terraform'
+  dependsOn: Validate
+  condition: succeeded()
+  jobs:
+  - deployment: Deploy
+    displayName: 'Deploy'
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform $(terraformVersion)'
+            inputs:
+              terraformVersion: '$(terraformVersion)'
+          
+          - task: TerraformTaskV3@3
+            displayName: 'Terraform Init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              backendServiceArm: '$(azureServiceConnection)'
+              backendAzureRmResourceGroupName: '$(terraformBackendResourceGroup)'
+              backendAzureRmStorageAccountName: '$(terraformBackendStorageAccount)'
+              backendAzureRmContainerName: '$(terraformBackendContainer)'
+              backendAzureRmKey: '$(terraformBackendKey)'
+          
+          - task: TerraformTaskV3@3
+            displayName: 'Terraform Apply'
+            inputs:
+              provider: 'azurerm'
+              command: 'apply'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              environmentServiceNameAzureRM: '$(azureServiceConnection)'
+              commandOptions: '$(terraformWorkingDirectory)/plan.tfplan'

@@ -1,0 +1,47 @@
+# Azure Provider Variables
+location            = "eastus"
+resource_group_name = "databricks-rg"
+
+# DataBricks Workspace Variables
+databricks_workspace_name = "databricks-workspace"
+databricks_sku            = "premium"
+tags = {
+  Environment = "Development"
+  Project     = "Data Platform"
+  Owner       = "Data Engineering Team"
+}
+
+# DataBricks Permissions Variables
+admin_users = [
+  "admin1@example.com",
+  "admin2@example.com"
+]
+
+contributor_users = [
+  "contributor1@example.com",
+  "contributor2@example.com"
+]
+
+reader_users = [
+  "reader1@example.com",
+  "reader2@example.com"
+]
+
+# Orchestrator (Airflow) Variables
+orchestrator_name      = "data-orchestrator"
+orchestrator_namespace = "airflow"
+
+kubernetes_config = {
+  cluster_name = "aks-cluster"
+  context      = "aks-context"
+}
+
+airflow_version = "2.5.1"
+airflow_config = {
+  "AIRFLOW__CORE__EXECUTOR"                = "KubernetesExecutor"
+  "AIRFLOW__CORE__LOAD_EXAMPLES"           = "false"
+  "AIRFLOW__WEBSERVER__EXPOSE_CONFIG"      = "true"
+  "AIRFLOW__KUBERNETES__NAMESPACE"         = "airflow"
+  "AIRFLOW__KUBERNETES__WORKER_CONTAINER_REPOSITORY" = "apache/airflow"
+  "AIRFLOW__KUBERNETES__WORKER_CONTAINER_TAG"        = "2.5.1"
+}
