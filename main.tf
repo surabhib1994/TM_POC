@@ -33,7 +33,7 @@ module "databricks_permissions" {
   contributor_users   = var.contributor_users
   reader_users        = var.reader_users
   
-  # Ensure this module runs after the workspace is created
+  
   depends_on = [module.databricks_workspace]
 }
 
@@ -48,6 +48,6 @@ module "orchestrator" {
   airflow_version     = var.airflow_version
   airflow_config      = var.airflow_config
   
-  # Ensure this module runs after the workspace is created
+  
   depends_on = [module.databricks_workspace]
 }

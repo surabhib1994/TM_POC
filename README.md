@@ -9,7 +9,7 @@ This Terraform project automates the provisioning and configuration of a complet
 
 ## Project Structure
 
-```
+
 terraform/
 ├── environments/         # Environment-specific configurations
 │   ├── dev/              # Development environment
@@ -20,7 +20,7 @@ terraform/
 │   ├── cicd/                    # CI/CD pipeline setup
 │   └── orchestrator/            # Airflow orchestrator setup
 └── README.md             # Project documentation
-```
+
 
 ## Prerequisites
 
@@ -210,7 +210,3 @@ This project follows Terraform best practices:
 2. Create a feature branch
 3. Make your changes
 4. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.

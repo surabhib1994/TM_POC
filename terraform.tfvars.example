@@ -27,7 +27,7 @@ reader_users = [
   "reader2@example.com"
 ]
 
-# Orchestrator (Airflow) Variables
+# Orchestrator Variables
 orchestrator_name      = "data-orchestrator"
 orchestrator_namespace = "airflow"
 
