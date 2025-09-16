@@ -1,0 +1,40 @@
+{
+  "name": "python-deployment-prod",
+  "existing_cluster_id": "your-prod-cluster-id",
+  "libraries": [
+    {
+      "whl": "dbfs:/FileStore/python_deployments/prod/deployment-placeholder/your-package-0.1.0-py3-none-any.whl"
+    },
+    {
+      "pypi": {
+        "package": "pandas"
+      }
+    },
+    {
+      "pypi": {
+        "package": "numpy"
+      }
+    }
+  ],
+  "spark_python_task": {
+    "python_file": "dbfs:/FileStore/python_deployments/prod/deployment-placeholder/main.py",
+    "parameters": ["--env", "prod", "--input-path", "/data/prod/input", "--output-path", "/data/prod/output"]
+  },
+  "email_notifications": {
+    "on_success": ["data-team@example.com"],
+    "on_failure": ["data-team@example.com", "ops-alerts@example.com", "manager@example.com"]
+  },
+  "timeout_seconds": 7200,
+  "max_retries": 3,
+  "retry_on_timeout": true,
+  "min_retry_interval_millis": 300000,
+  "schedule": {
+    "quartz_cron_expression": "0 0 2 * * ?",
+    "timezone_id": "UTC"
+  },
+  "tags": {
+    "environment": "production",
+    "department": "data-engineering",
+    "criticality": "high"
+  }
+}

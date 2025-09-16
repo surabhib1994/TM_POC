@@ -1,0 +1,34 @@
+{
+  "name": "python-deployment-dev",
+  "existing_cluster_id": "your-dev-cluster-id",
+  "libraries": [
+    {
+      "whl": "dbfs:/FileStore/python_deployments/dev/deployment-placeholder/your-package-0.1.0-py3-none-any.whl"
+    },
+    {
+      "pypi": {
+        "package": "pandas"
+      }
+    },
+    {
+      "pypi": {
+        "package": "numpy"
+      }
+    }
+  ],
+  "spark_python_task": {
+    "python_file": "dbfs:/FileStore/python_deployments/dev/deployment-placeholder/main.py",
+    "parameters": ["--env", "dev", "--input-path", "/data/input", "--output-path", "/data/output"]
+  },
+  "email_notifications": {
+    "on_success": ["dev-team@example.com"],
+    "on_failure": ["dev-team@example.com", "alerts@example.com"]
+  },
+  "timeout_seconds": 3600,
+  "max_retries": 1,
+  "retry_on_timeout": false,
+  "schedule": {
+    "quartz_cron_expression": "0 0 * * * ?",
+    "timezone_id": "UTC"
+  }
+}

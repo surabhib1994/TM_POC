@@ -1,0 +1,178 @@
+# Azure DevOps Pipeline for Python Deployment
+# This pipeline automates the testing, building, and deployment of Python code to Databricks
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - src/**/*.py
+    - tests/**/*.py
+    - requirements*.txt
+    - setup.py
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+parameters:
+  - name: environment
+    displayName: Environment
+    type: string
+    default: dev
+    values:
+    - dev
+    - prod
+
+variables:
+  - name: pythonVersion
+    value: '3.9'
+  - name: azureServiceConnection
+    value: 'azure-service-connection'
+  - name: databricksWorkspaceUrl
+    value: '$(DATABRICKS_WORKSPACE_URL_${{ parameters.environment }})'
+  - name: databricksToken
+    value: '$(DATABRICKS_TOKEN_${{ parameters.environment }})'
+
+stages:
+- stage: Test
+  displayName: 'Lint and Test'
+  jobs:
+  - job: LintAndTest
+    displayName: 'Lint and Test'
+    steps:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        addToPath: true
+    
+    - script: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest pytest-cov
+        pip install -r requirements-dev.txt || true
+        pip install -r requirements.txt || true
+      displayName: 'Install dependencies'
+    
+    - script: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      displayName: 'Lint with flake8'
+    
+    - script: |
+        pytest --cov=src tests/ --cov-report=xml --cov-report=html
+      displayName: 'Test with pytest'
+    
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish code coverage report'
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage.xml'
+        reportDirectory: '$(System.DefaultWorkingDirectory)/htmlcov'
+
+- stage: Build
+  displayName: 'Build Package'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - job: BuildPackage
+    displayName: 'Build Python Package'
+    steps:
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        addToPath: true
+    
+    - script: |
+        python -m pip install --upgrade pip
+        pip install build wheel setuptools
+      displayName: 'Install build dependencies'
+    
+    - script: |
+        python -m build
+      displayName: 'Build Python package'
+    
+    - task: CopyFiles@2
+      displayName: 'Copy build artifacts'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)/dist'
+        Contents: '**'
+        TargetFolder: '$(Build.ArtifactStagingDirectory)/dist'
+    
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish build artifacts'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'python-package'
+        publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: 'Deploy to Databricks'
+  dependsOn: Build
+  condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.SourceBranch'], 'refs/heads/develop')))
+  jobs:
+  - deployment: DeployToDatabricks
+    displayName: 'Deploy to Databricks'
+    environment: ${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: UsePythonVersion@0
+            displayName: 'Use Python $(pythonVersion)'
+            inputs:
+              versionSpec: '$(pythonVersion)'
+              addToPath: true
+          
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download build artifacts'
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'python-package'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              pip install databricks-cli
+            displayName: 'Install Databricks CLI'
+          
+          - script: |
+              echo "host=$(databricksWorkspaceUrl)" > ~/.databrickscfg
+              echo "token=$(databricksToken)" >> ~/.databrickscfg
+            displayName: 'Configure Databricks CLI'
+          
+          - script: |
+              DEPLOY_DIR="deployment-$(Build.BuildId)"
+              mkdir -p $DEPLOY_DIR
+              cp $(System.ArtifactsDirectory)/python-package/dist/* $DEPLOY_DIR/
+              cp -r src/* $DEPLOY_DIR/
+              if [ -f requirements.txt ]; then cp requirements.txt $DEPLOY_DIR/; fi
+              
+              # Create DBFS directory
+              databricks fs mkdirs "dbfs:/FileStore/python_deployments/${{ parameters.environment }}/$DEPLOY_DIR"
+              
+              # Upload files to DBFS
+              databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/${{ parameters.environment }}/"
+              
+              DBFS_PATH="/dbfs/FileStore/python_deployments/${{ parameters.environment }}/$DEPLOY_DIR"
+              
+              # Create or update job if needed
+              if [ -f "databricks-job-${{ parameters.environment }}.json" ]; then
+                # Update job configuration with new deployment path
+                sed -i "s|/dbfs/FileStore/python_deployments/${{ parameters.environment }}/[^/]*/|$DBFS_PATH/|g" "databricks-job-${{ parameters.environment }}.json"
+                
+                # Create or update job
+                JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name=="python-deployment-${{ parameters.environment }}") | .job_id')
+                if [ -z "$JOB_ID" ]; then
+                  databricks jobs create --json-file "databricks-job-${{ parameters.environment }}.json"
+                else
+                  databricks jobs reset --job-id $JOB_ID --json-file "databricks-job-${{ parameters.environment }}.json"
+                fi
+              fi
+              
+              echo "Deployment completed to $DBFS_PATH"
+            displayName: 'Deploy to Databricks'
