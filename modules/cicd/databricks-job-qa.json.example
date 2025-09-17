@@ -1,9 +1,9 @@
 {
-  "name": "python-etl-job-dev",
-  "existing_cluster_id": "your-dev-cluster-id",
+  "name": "python-etl-job-qa",
+  "existing_cluster_id": "your-qa-cluster-id",
   "libraries": [
     {
-      "whl": "dbfs:/FileStore/python_deployments/dev/deployment-{BUILD_ID}/your-package-0.1.0-py3-none-any.whl"
+      "whl": "dbfs:/FileStore/python_deployments/qa/deployment-{BUILD_ID}/your-package-0.1.0-py3-none-any.whl"
     },
     {
       "pypi": {
@@ -17,23 +17,25 @@
     }
   ],
   "spark_python_task": {
-    "python_file": "dbfs:/FileStore/python_deployments/dev/deployment-{BUILD_ID}/main.py",
-    "parameters": ["--env", "dev", "--input-path", "/data/input", "--output-path", "/data/output"]
+    "python_file": "dbfs:/FileStore/python_deployments/qa/deployment-{BUILD_ID}/main.py",
+    "parameters": ["--env", "qa", "--input-path", "/data/qa/input", "--output-path", "/data/qa/output"]
   },
   "email_notifications": {
-    "on_success": ["dev-team@example.com"],
-    "on_failure": ["dev-team@example.com", "alerts@example.com"]
+    "on_success": ["qa-team@example.com"],
+    "on_failure": ["qa-team@example.com", "dev-team@example.com"]
   },
-  "timeout_seconds": 3600,
-  "max_retries": 1,
-  "retry_on_timeout": false,
+  "timeout_seconds": 5400,
+  "max_retries": 2,
+  "retry_on_timeout": true,
+  "min_retry_interval_millis": 180000,
   "schedule": {
-    "quartz_cron_expression": "0 0 * * * ?",
+    "quartz_cron_expression": "0 0 12 * * ?",
     "timezone_id": "UTC"
   },
   "tags": {
-    "environment": "development",
+    "environment": "qa",
     "department": "data-engineering",
+    "criticality": "medium",
     "deployed-by": "ci-cd-pipeline"
   }
 }
@@ -45,23 +47,22 @@
 // 4. Example usage with Airflow:
 //    ```python
 //    from airflow.providers.databricks.operators.databricks import DatabricksSubmitRunOperator
-//
+//    
 //    # Get the deployment path from a previous step or variable
 //    deployment_path = "deployment-123456"
-//
+//    
 //    # Read and modify the job configuration
-//    with open('databricks-job-dev.json') as f:
+//    with open('databricks-job-qa.json') as f:
 //        job_config = json.load(f)
-//
+//    
 //    # Update the deployment path
 //    job_config['libraries'][0]['whl'] = job_config['libraries'][0]['whl'].replace('{BUILD_ID}', deployment_path)
 //    job_config['spark_python_task']['python_file'] = job_config['spark_python_task']['python_file'].replace('{BUILD_ID}', deployment_path)
-//
+//    
 //    # Create the Databricks job
 //    run_etl = DatabricksSubmitRunOperator(
 //        task_id='run_etl_job',
 //        json=job_config,
-//        databricks_conn_id='databricks_dev',
+//        databricks_conn_id='databricks_qa',
 //        dag=dag
 //    )
-//    ```

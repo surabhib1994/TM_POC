@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - develop
+      - release/*
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'
@@ -15,6 +16,7 @@ on:
     branches:
       - main
       - develop
+      - release/*
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'
@@ -29,29 +31,23 @@ on:
         type: choice
         options:
           - dev
+          - qa
           - prod
 
 env:
   PYTHON_VERSION: '3.9'
-  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-  DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
 
 jobs:
   lint-and-test:
     name: 'Lint and Test'
     runs-on: ubuntu-latest
+    container:
+      image: python:3.9-slim
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
       
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
-        
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -80,17 +76,14 @@ jobs:
     name: 'Build Package'
     needs: lint-and-test
     runs-on: ubuntu-latest
+    container:
+      image: python:3.9-slim
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
       
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        
     - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
@@ -107,22 +100,19 @@ jobs:
         path: dist/
         retention-days: 7
 
-  deploy-to-databricks:
-    name: 'Deploy to Databricks'
+  deploy-to-dev:
+    name: 'Deploy to DEV'
     needs: build
     runs-on: ubuntu-latest
-    environment: ${{ env.ENVIRONMENT }}
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch')
+    container:
+      image: python:3.9-slim
+    environment: dev
+    if: (github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev'))
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
       
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        
     - name: Download build artifacts
       uses: actions/download-artifact@v3
       with:
@@ -135,8 +125,8 @@ jobs:
         
     - name: Configure Databricks CLI
       run: |
-        echo "host=${{ env.DATABRICKS_HOST }}" > ~/.databrickscfg
-        echo "token=${{ env.DATABRICKS_TOKEN }}" >> ~/.databrickscfg
+        echo "host=${{ secrets.DATABRICKS_HOST_DEV }}" > ~/.databrickscfg
+        echo "token=${{ secrets.DATABRICKS_TOKEN_DEV }}" >> ~/.databrickscfg
         
     - name: Create deployment directory
       run: |
@@ -149,26 +139,110 @@ jobs:
     - name: Deploy to Databricks
       run: |
         DEPLOY_DIR="deployment-${{ github.run_id }}"
-        DBFS_PATH="/dbfs/FileStore/python_deployments/${{ env.ENVIRONMENT }}/$DEPLOY_DIR"
         
         # Create DBFS directory
-        databricks fs mkdirs "dbfs:/FileStore/python_deployments/${{ env.ENVIRONMENT }}/$DEPLOY_DIR"
+        databricks fs mkdirs "dbfs:/FileStore/python_deployments/dev/$DEPLOY_DIR"
         
         # Upload files to DBFS
-        databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/${{ env.ENVIRONMENT }}/"
+        databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/dev/"
         
-        # Create or update job if needed
-        if [ -f "databricks-job-${{ env.ENVIRONMENT }}.json" ]; then
-          # Update job configuration with new deployment path
-          sed -i "s|/dbfs/FileStore/python_deployments/${{ env.ENVIRONMENT }}/[^/]*/|$DBFS_PATH/|g" "databricks-job-${{ env.ENVIRONMENT }}.json"
-          
-          # Create or update job
-          JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name=="python-deployment-${{ env.ENVIRONMENT }}") | .job_id')
-          if [ -z "$JOB_ID" ]; then
-            databricks jobs create --json-file "databricks-job-${{ env.ENVIRONMENT }}.json"
-          else
-            databricks jobs reset --job-id $JOB_ID --json-file "databricks-job-${{ env.ENVIRONMENT }}.json"
-          fi
-        fi
+        echo "Deployment completed to dbfs:/FileStore/python_deployments/dev/$DEPLOY_DIR"
+        echo "DBFS_PATH=/dbfs/FileStore/python_deployments/dev/$DEPLOY_DIR" >> $GITHUB_ENV
+
+  deploy-to-qa:
+    name: 'Deploy to QA'
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.9-slim
+    environment: qa
+    if: (github.ref == 'refs/heads/release/*' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'qa'))
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package
+        path: dist/
         
-        echo "Deployment completed to $DBFS_PATH"
+    - name: Install Databricks CLI
+      run: |
+        pip install databricks-cli
+        
+    - name: Configure Databricks CLI
+      run: |
+        echo "host=${{ secrets.DATABRICKS_HOST_QA }}" > ~/.databrickscfg
+        echo "token=${{ secrets.DATABRICKS_TOKEN_QA }}" >> ~/.databrickscfg
+        
+    - name: Create deployment directory
+      run: |
+        DEPLOY_DIR="deployment-${{ github.run_id }}"
+        mkdir -p $DEPLOY_DIR
+        cp dist/* $DEPLOY_DIR/
+        cp -r src/* $DEPLOY_DIR/
+        if [ -f requirements.txt ]; then cp requirements.txt $DEPLOY_DIR/; fi
+        
+    - name: Deploy to Databricks
+      run: |
+        DEPLOY_DIR="deployment-${{ github.run_id }}"
+        
+        # Create DBFS directory
+        databricks fs mkdirs "dbfs:/FileStore/python_deployments/qa/$DEPLOY_DIR"
+        
+        # Upload files to DBFS
+        databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/qa/"
+        
+        echo "Deployment completed to dbfs:/FileStore/python_deployments/qa/$DEPLOY_DIR"
+        echo "DBFS_PATH=/dbfs/FileStore/python_deployments/qa/$DEPLOY_DIR" >> $GITHUB_ENV
+
+  deploy-to-prod:
+    name: 'Deploy to PROD'
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.9-slim
+    environment: prod
+    if: (github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'))
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package
+        path: dist/
+        
+    - name: Install Databricks CLI
+      run: |
+        pip install databricks-cli
+        
+    - name: Configure Databricks CLI
+      run: |
+        echo "host=${{ secrets.DATABRICKS_HOST_PROD }}" > ~/.databrickscfg
+        echo "token=${{ secrets.DATABRICKS_TOKEN_PROD }}" >> ~/.databrickscfg
+        
+    - name: Create deployment directory
+      run: |
+        DEPLOY_DIR="deployment-${{ github.run_id }}"
+        mkdir -p $DEPLOY_DIR
+        cp dist/* $DEPLOY_DIR/
+        cp -r src/* $DEPLOY_DIR/
+        if [ -f requirements.txt ]; then cp requirements.txt $DEPLOY_DIR/; fi
+        
+    - name: Deploy to Databricks
+      run: |
+        DEPLOY_DIR="deployment-${{ github.run_id }}"
+        
+        # Create DBFS directory
+        databricks fs mkdirs "dbfs:/FileStore/python_deployments/prod/$DEPLOY_DIR"
+        
+        # Upload files to DBFS
+        databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/prod/"
+        
+        echo "Deployment completed to dbfs:/FileStore/python_deployments/prod/$DEPLOY_DIR"
+        echo "DBFS_PATH=/dbfs/FileStore/python_deployments/prod/$DEPLOY_DIR" >> $GITHUB_ENV

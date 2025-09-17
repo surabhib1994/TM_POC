@@ -6,6 +6,7 @@ trigger:
     include:
     - main
     - develop
+    - release/*
   paths:
     include:
     - src/**/*.py
@@ -23,6 +24,7 @@ parameters:
     default: dev
     values:
     - dev
+    - qa
     - prod
 
 variables:
@@ -30,10 +32,6 @@ variables:
     value: '3.9'
   - name: azureServiceConnection
     value: 'azure-service-connection'
-  - name: databricksWorkspaceUrl
-    value: '$(DATABRICKS_WORKSPACE_URL_${{ parameters.environment }})'
-  - name: databricksToken
-    value: '$(DATABRICKS_TOKEN_${{ parameters.environment }})'
 
 stages:
 - stage: Test
@@ -41,13 +39,11 @@ stages:
   jobs:
   - job: LintAndTest
     displayName: 'Lint and Test'
+    pool:
+      vmImage: 'ubuntu-latest'
+    container:
+      image: python:3.9-slim
     steps:
-    - task: UsePythonVersion@0
-      displayName: 'Use Python $(pythonVersion)'
-      inputs:
-        versionSpec: '$(pythonVersion)'
-        addToPath: true
-    
     - script: |
         python -m pip install --upgrade pip
         pip install flake8 pytest pytest-cov
@@ -78,13 +74,11 @@ stages:
   jobs:
   - job: BuildPackage
     displayName: 'Build Python Package'
+    pool:
+      vmImage: 'ubuntu-latest'
+    container:
+      image: python:3.9-slim
     steps:
-    - task: UsePythonVersion@0
-      displayName: 'Use Python $(pythonVersion)'
-      inputs:
-        versionSpec: '$(pythonVersion)'
-        addToPath: true
-    
     - script: |
         python -m pip install --upgrade pip
         pip install build wheel setuptools
@@ -108,25 +102,23 @@ stages:
         ArtifactName: 'python-package'
         publishLocation: 'Container'
 
-- stage: Deploy
-  displayName: 'Deploy to Databricks'
+- stage: DeployToDev
+  displayName: 'Deploy to DEV'
   dependsOn: Build
-  condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.SourceBranch'], 'refs/heads/develop')))
+  condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/develop'), eq('${{ parameters.environment }}', 'dev')))
   jobs:
-  - deployment: DeployToDatabricks
-    displayName: 'Deploy to Databricks'
-    environment: ${{ parameters.environment }}
+  - deployment: DeployToDev
+    displayName: 'Deploy to DEV Environment'
+    environment: dev
+    pool:
+      vmImage: 'ubuntu-latest'
+    container:
+      image: python:3.9-slim
     strategy:
       runOnce:
         deploy:
           steps:
           - checkout: self
-          
-          - task: UsePythonVersion@0
-            displayName: 'Use Python $(pythonVersion)'
-            inputs:
-              versionSpec: '$(pythonVersion)'
-              addToPath: true
           
           - task: DownloadBuildArtifacts@0
             displayName: 'Download build artifacts'
@@ -141,8 +133,8 @@ stages:
             displayName: 'Install Databricks CLI'
           
           - script: |
-              echo "host=$(databricksWorkspaceUrl)" > ~/.databrickscfg
-              echo "token=$(databricksToken)" >> ~/.databrickscfg
+              echo "host=$(DATABRICKS_WORKSPACE_URL_DEV)" > ~/.databrickscfg
+              echo "token=$(DATABRICKS_TOKEN_DEV)" >> ~/.databrickscfg
             displayName: 'Configure Databricks CLI'
           
           - script: |
@@ -153,26 +145,118 @@ stages:
               if [ -f requirements.txt ]; then cp requirements.txt $DEPLOY_DIR/; fi
               
               # Create DBFS directory
-              databricks fs mkdirs "dbfs:/FileStore/python_deployments/${{ parameters.environment }}/$DEPLOY_DIR"
+              databricks fs mkdirs "dbfs:/FileStore/python_deployments/dev/$DEPLOY_DIR"
               
               # Upload files to DBFS
-              databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/${{ parameters.environment }}/"
+              databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/dev/"
               
-              DBFS_PATH="/dbfs/FileStore/python_deployments/${{ parameters.environment }}/$DEPLOY_DIR"
-              
-              # Create or update job if needed
-              if [ -f "databricks-job-${{ parameters.environment }}.json" ]; then
-                # Update job configuration with new deployment path
-                sed -i "s|/dbfs/FileStore/python_deployments/${{ parameters.environment }}/[^/]*/|$DBFS_PATH/|g" "databricks-job-${{ parameters.environment }}.json"
-                
-                # Create or update job
-                JOB_ID=$(databricks jobs list --output JSON | jq -r '.jobs[] | select(.settings.name=="python-deployment-${{ parameters.environment }}") | .job_id')
-                if [ -z "$JOB_ID" ]; then
-                  databricks jobs create --json-file "databricks-job-${{ parameters.environment }}.json"
-                else
-                  databricks jobs reset --job-id $JOB_ID --json-file "databricks-job-${{ parameters.environment }}.json"
-                fi
-              fi
-              
+              DBFS_PATH="/dbfs/FileStore/python_deployments/dev/$DEPLOY_DIR"
               echo "Deployment completed to $DBFS_PATH"
-            displayName: 'Deploy to Databricks'
+              echo "##vso[task.setvariable variable=DBFS_PATH;]$DBFS_PATH"
+            displayName: 'Deploy to DEV Databricks'
+
+- stage: DeployToQA
+  displayName: 'Deploy to QA'
+  dependsOn: Build
+  condition: and(succeeded(), or(startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'), eq('${{ parameters.environment }}', 'qa')))
+  jobs:
+  - deployment: DeployToQA
+    displayName: 'Deploy to QA Environment'
+    environment: qa
+    pool:
+      vmImage: 'ubuntu-latest'
+    container:
+      image: python:3.9-slim
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download build artifacts'
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'python-package'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              pip install databricks-cli
+            displayName: 'Install Databricks CLI'
+          
+          - script: |
+              echo "host=$(DATABRICKS_WORKSPACE_URL_QA)" > ~/.databrickscfg
+              echo "token=$(DATABRICKS_TOKEN_QA)" >> ~/.databrickscfg
+            displayName: 'Configure Databricks CLI'
+          
+          - script: |
+              DEPLOY_DIR="deployment-$(Build.BuildId)"
+              mkdir -p $DEPLOY_DIR
+              cp $(System.ArtifactsDirectory)/python-package/dist/* $DEPLOY_DIR/
+              cp -r src/* $DEPLOY_DIR/
+              if [ -f requirements.txt ]; then cp requirements.txt $DEPLOY_DIR/; fi
+              
+              # Create DBFS directory
+              databricks fs mkdirs "dbfs:/FileStore/python_deployments/qa/$DEPLOY_DIR"
+              
+              # Upload files to DBFS
+              databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/qa/"
+              
+              DBFS_PATH="/dbfs/FileStore/python_deployments/qa/$DEPLOY_DIR"
+              echo "Deployment completed to $DBFS_PATH"
+              echo "##vso[task.setvariable variable=DBFS_PATH;]$DBFS_PATH"
+            displayName: 'Deploy to QA Databricks'
+
+- stage: DeployToProd
+  displayName: 'Deploy to PROD'
+  dependsOn: Build
+  condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq('${{ parameters.environment }}', 'prod')))
+  jobs:
+  - deployment: DeployToProd
+    displayName: 'Deploy to PROD Environment'
+    environment: prod
+    pool:
+      vmImage: 'ubuntu-latest'
+    container:
+      image: python:3.9-slim
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download build artifacts'
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'python-package'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              pip install databricks-cli
+            displayName: 'Install Databricks CLI'
+          
+          - script: |
+              echo "host=$(DATABRICKS_WORKSPACE_URL_PROD)" > ~/.databrickscfg
+              echo "token=$(DATABRICKS_TOKEN_PROD)" >> ~/.databrickscfg
+            displayName: 'Configure Databricks CLI'
+          
+          - script: |
+              DEPLOY_DIR="deployment-$(Build.BuildId)"
+              mkdir -p $DEPLOY_DIR
+              cp $(System.ArtifactsDirectory)/python-package/dist/* $DEPLOY_DIR/
+              cp -r src/* $DEPLOY_DIR/
+              if [ -f requirements.txt ]; then cp requirements.txt $DEPLOY_DIR/; fi
+              
+              # Create DBFS directory
+              databricks fs mkdirs "dbfs:/FileStore/python_deployments/prod/$DEPLOY_DIR"
+              
+              # Upload files to DBFS
+              databricks fs cp -r $DEPLOY_DIR "dbfs:/FileStore/python_deployments/prod/"
+              
+              DBFS_PATH="/dbfs/FileStore/python_deployments/prod/$DEPLOY_DIR"
+              echo "Deployment completed to $DBFS_PATH"
+              echo "##vso[task.setvariable variable=DBFS_PATH;]$DBFS_PATH"
+            displayName: 'Deploy to PROD Databricks'

@@ -118,7 +118,7 @@ The GitHub Actions workflow for Python (`python-workflow.yml`) provides a comple
 
 1. **Lint and Test**: Installs dependencies, runs linting with flake8, and executes tests with pytest
 2. **Build Package**: Builds Python packages using the build package
-3. **Deploy to Databricks**: Deploys the Python code to Databricks using the Databricks CLI
+3. **Deploy to DEV/QA/PROD**: Separate deployment jobs for each environment that deploy the Python code to Databricks using the Databricks CLI
 
 #### Setup Instructions
 
@@ -130,17 +130,23 @@ The GitHub Actions workflow for Python (`python-workflow.yml`) provides a comple
    - `setup.py`: Package configuration
 3. Set up the required secrets in your repository:
    - Go to Settings > Secrets and variables > Actions
-   - Add the following secrets:
-     - `DATABRICKS_HOST`: Databricks workspace URL
-     - `DATABRICKS_TOKEN`: Databricks access token
+   - Add the following secrets for each environment:
+     - `DATABRICKS_HOST_DEV`: Databricks workspace URL for DEV
+     - `DATABRICKS_TOKEN_DEV`: Databricks access token for DEV
+     - `DATABRICKS_HOST_QA`: Databricks workspace URL for QA
+     - `DATABRICKS_TOKEN_QA`: Databricks access token for QA
+     - `DATABRICKS_HOST_PROD`: Databricks workspace URL for PROD
+     - `DATABRICKS_TOKEN_PROD`: Databricks access token for PROD
 4. Place the workflow file in `.github/workflows/python-workflow.yml`
 
-#### Required Secrets
+#### Environment-Specific Deployments
 
-Configure the following secrets in your GitHub repository:
+The workflow is configured to deploy to different environments based on the branch:
+- **DEV**: Deploys when code is pushed to the `develop` branch
+- **QA**: Deploys when code is pushed to a `release/*` branch
+- **PROD**: Deploys when code is pushed to the `main` branch
 
-- `DATABRICKS_HOST`: Databricks workspace URL
-- `DATABRICKS_TOKEN`: Databricks access token
+You can also manually trigger a deployment to a specific environment using the workflow dispatch feature.
 
 ### Azure DevOps Pipeline
 
@@ -148,7 +154,7 @@ The Azure DevOps pipeline for Python (`python-azure-pipelines.yml`) provides a s
 
 1. **Test**: Installs dependencies, runs linting with flake8, and executes tests with pytest
 2. **Build**: Builds Python packages using the build package
-3. **Deploy**: Deploys the Python code to Databricks using the Databricks CLI
+3. **Deploy to DEV/QA/PROD**: Separate deployment stages for each environment
 
 #### Setup Instructions
 
@@ -164,43 +170,35 @@ The Azure DevOps pipeline for Python (`python-azure-pipelines.yml`) provides a s
    - Choose "Existing Azure Pipelines YAML file"
    - Select the path to `python-azure-pipelines.yml`
    - Save and run the pipeline
+4. Set up environments in Azure DevOps:
+   - Go to Pipelines > Environments
+   - Create environments for `dev`, `qa`, and `prod`
+   - Configure approval requirements for each environment as needed
 
 #### Required Variables
 
 Configure the following variables in your pipeline:
 
-- `DATABRICKS_WORKSPACE_URL_dev`: Databricks workspace URL for dev environment
-- `DATABRICKS_TOKEN_dev`: Databricks access token for dev environment
-- `DATABRICKS_WORKSPACE_URL_prod`: Databricks workspace URL for prod environment
-- `DATABRICKS_TOKEN_prod`: Databricks access token for prod environment
+- `DATABRICKS_WORKSPACE_URL_DEV`: Databricks workspace URL for DEV environment
+- `DATABRICKS_TOKEN_DEV`: Databricks access token for DEV environment
+- `DATABRICKS_WORKSPACE_URL_QA`: Databricks workspace URL for QA environment
+- `DATABRICKS_TOKEN_QA`: Databricks access token for QA environment
+- `DATABRICKS_WORKSPACE_URL_PROD`: Databricks workspace URL for PROD environment
+- `DATABRICKS_TOKEN_PROD`: Databricks access token for PROD environment
 
-### Databricks Job Configuration
+### Performance Optimizations
 
-To automate the execution of your Python code in Databricks, create a job configuration file for each environment:
+Both pipelines use slimmed-down Docker images (`python:3.9-slim`) to improve performance by reducing image pull times and resource usage. This results in faster pipeline execution and more efficient resource utilization.
 
-1. Create a file named `databricks-job-dev.json` for the development environment
-2. Create a file named `databricks-job-prod.json` for the production environment
+### Deployment Path
 
-Example job configuration:
-
-```json
-{
-  "name": "python-deployment-dev",
-  "existing_cluster_id": "your-cluster-id",
-  "libraries": [
-    {
-      "whl": "dbfs:/FileStore/python_deployments/dev/deployment-placeholder/your-package-0.1.0-py3-none-any.whl"
-    }
-  ],
-  "spark_python_task": {
-    "python_file": "dbfs:/FileStore/python_deployments/dev/deployment-placeholder/main.py",
-    "parameters": ["param1", "param2"]
-  },
-  "schedule": {
-    "quartz_cron_expression": "0 0 * * * ?",
-    "timezone_id": "UTC"
-  }
-}
+The pipelines deploy Python code to Databricks DBFS with the following path structure:
+```
+/dbfs/FileStore/python_deployments/<environment>/deployment-<build_id>/
 ```
 
-The deployment path in the job configuration will be automatically updated by the pipeline to point to the latest deployment.
+Where:
+- `<environment>` is `dev`, `qa`, or `prod`
+- `<build_id>` is the unique build ID from the CI/CD system
+
+This path is output at the end of each deployment job and can be used by external orchestration systems like Airflow to run the deployed code.
